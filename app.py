@@ -434,7 +434,7 @@ def process_bol_files(planex_files, order_files):
     df_bol["Order Quantity"] = df_bol["Order Quantity"].astype(int)
     df_bol["Pallet_qty"] = df_bol["Pallet_qty"].astype(int)
 
-    return df_bol, upload_merged, df_upload, df_upload_planex
+    return df_bol, upload_merged, df_upload, df_upload_planex, df_copy, merged_df
 
 
 # =========================================================
@@ -502,6 +502,60 @@ def create_excel_report(df_bol, upload_merged):
         upload_merged.to_excel(writer, index=False, sheet_name="Merged Detail")
     output.seek(0)
     return output
+
+def build_missing_bol_reason_table(
+    df_upload_planex,
+    df_upload,
+    df_copy,
+    merged_df,
+    upload_merged,
+    df_bol
+):
+    accepted_sids = set(df_upload_planex["Shipment ID"].dropna().astype(str).str.strip().unique())
+    generated_sids = set(df_bol["SID"].dropna().astype(str).str.strip().unique())
+    missing_sids = sorted(accepted_sids - generated_sids)
+
+    open_order_sids = set(df_upload["SID"].dropna().astype(str).str.strip().unique())
+    after_ltl_merge_sids = set(df_copy["SID"].dropna().astype(str).str.strip().unique())
+    after_carrier_filter_sids = set(merged_df["SID"].dropna().astype(str).str.strip().unique())
+    after_planex_merge_sids = set(upload_merged["SID"].dropna().astype(str).str.strip().unique())
+
+    rows = []
+
+    for sid in missing_sids:
+        if sid not in open_order_sids:
+            reason = "No matching SID in RDC Open Orders"
+        elif sid not in after_ltl_merge_sids:
+            reason = "Dropped in LTL qty merge (missing material mapping)"
+        elif sid not in after_carrier_filter_sids:
+            reason = "Dropped after carrier mapping (missing SCAC/carrier match)"
+        elif sid not in after_planex_merge_sids:
+            reason = "Dropped before/at Planex merge"
+        else:
+            reason = "Present in merged data but no BOL created"
+
+        planex_subset = df_upload_planex[
+            df_upload_planex["Shipment ID"].astype(str).str.strip() == sid
+        ]
+
+        destination_id = ""
+        shipment_status = ""
+        pickup_date = ""
+
+        if not planex_subset.empty:
+            destination_id = planex_subset["Destination ID"].iloc[0] if "Destination ID" in planex_subset.columns else ""
+            shipment_status = planex_subset["Shipment Status"].iloc[0] if "Shipment Status" in planex_subset.columns else ""
+            pickup_date = planex_subset["Pickup Date"].iloc[0] if "Pickup Date" in planex_subset.columns else ""
+
+        rows.append({
+            "Shipment ID": sid,
+            "Reason BOL not created": reason,
+            "Destination ID": destination_id,
+            "Shipment Status": shipment_status,
+            "Pickup Date": pickup_date
+        })
+
+    return pd.DataFrame(rows)
 
 
 # =========================================================
@@ -573,65 +627,75 @@ if run:
 
     try:
         with st.spinner("Processing files and generating BOLs..."):
-            df_bol, upload_merged, df_upload, df_upload_planex = process_bol_files(planex_files, order_files)
+            df_bol, upload_merged, df_upload, df_upload_planex, df_copy, merged_df = process_bol_files(planex_files, order_files)
             doc_buffers = generate_documents(df_bol, upload_merged)
             zip_buffer = create_zip_from_docs(doc_buffers)
             excel_report = create_excel_report(df_bol, upload_merged)
 
         st.success(f"Done. Generated {len(doc_buffers)} shipment document(s).")
 
-       # KPI BLOCK
-        docx_generated = len(doc_buffers)
+# ================= KPI BLOCK =================
+docx_generated = len(doc_buffers)
 
-        unique_sids = df_upload["SID"].dropna().nunique()
-        unique_pos = df_upload["Purchase order no."].dropna().nunique()
-        unique_dns = df_upload["DN#"].dropna().nunique()
+unique_sids = df_upload["SID"].dropna().nunique()
+unique_pos = df_upload["Purchase order no."].dropna().nunique()
+unique_dns = df_upload["DN#"].dropna().nunique()
 
-        ifc_pos = (
-            upload_merged.loc[upload_merged["Destination ID"] == "XD16", "Purchase order no."]
-            .dropna()
-            .nunique()
-        )
+ifc_pos = (
+    upload_merged.loc[upload_merged["Destination ID"] == "XD16", "Purchase order no."]
+    .dropna()
+    .nunique()
+)
 
-        k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3, k4, k5 = st.columns(5)
 
-        k1.metric("DOCX generated", docx_generated)
-        k2.metric("Unique SIDs", unique_sids)
-        k3.metric("Unique POs", unique_pos)
-        k4.metric("Unique Deliveries", unique_dns)
-        k5.metric("IFC POs", ifc_pos)
+k1.metric("DOCX generated", docx_generated)
+k2.metric("Unique SIDs", unique_sids)
+k3.metric("Unique POs", unique_pos)
+k4.metric("Unique Deliveries", unique_dns)
+k5.metric("IFC POs", ifc_pos)
+# ============================================
 
-        generated_sids = set(df_bol["SID"].dropna().astype(str).str.strip().unique())
-        accepted_sids = set(df_upload_planex["Shipment ID"].dropna().astype(str).str.strip().unique())
-        missing_bol_sids = sorted(accepted_sids - generated_sids)
 
-        if missing_bol_sids:
-            st.warning(f"{len(missing_bol_sids)} accepted Shipment ID(s) did not generate a BOL.")
+# ================= WARNING BLOCK =================
+warning_df = build_missing_bol_reason_table(
+    df_upload_planex=df_upload_planex,
+    df_upload=df_upload,
+    df_copy=df_copy,
+    merged_df=merged_df,
+    upload_merged=upload_merged,
+    df_bol=df_bol
+)
 
-            warning_df = pd.DataFrame({
-                "Missing Shipment ID": missing_bol_sids
-            })
+if not warning_df.empty:
+    st.warning(f"{len(warning_df)} accepted Shipment ID(s) did not generate a BOL.")
+    st.dataframe(warning_df, use_container_width=True)
+else:
+    st.info("All accepted Shipment IDs generated a BOL.")
+# =================================================
 
-            st.dataframe(warning_df, use_container_width=True)
-        else:
-            st.info("All accepted Shipment IDs generated a BOL.")
 
-        with st.expander("BOL Summary"):
-            st.dataframe(df_bol, use_container_width=True)
+# ================= OPTIONAL PREVIEW =================
+with st.expander("BOL Summary"):
+    st.dataframe(df_bol, use_container_width=True)
+# ===================================================
 
-        st.download_button(
-            label="Download ZIP of BOL files",
-            data=zip_buffer,
-            file_name="BOL_created.zip",
-            mime="application/zip"
-        )
 
-        st.download_button(
-            label="Download Excel report",
-            data=excel_report,
-            file_name="BOL_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+# ================= DOWNLOAD BUTTONS =================
+st.download_button(
+    label="Download ZIP of BOL files",
+    data=zip_buffer,
+    file_name="BOL_created.zip",
+    mime="application/zip"
+)
+
+st.download_button(
+    label="Download Excel report",
+    data=excel_report,
+    file_name="BOL_report.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+# ===================================================
 
     except Exception as e:
         st.exception(e)
