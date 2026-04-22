@@ -503,6 +503,7 @@ def create_excel_report(df_bol, upload_merged):
     output.seek(0)
     return output
 
+
 def build_missing_bol_reason_table(
     df_upload_planex,
     df_upload,
@@ -634,68 +635,55 @@ if run:
 
         st.success(f"Done. Generated {len(doc_buffers)} shipment document(s).")
 
-# ================= KPI BLOCK =================
-docx_generated = len(doc_buffers)
+        docx_generated = len(doc_buffers)
+        unique_sids = df_upload["SID"].dropna().nunique()
+        unique_pos = df_upload["Purchase order no."].dropna().nunique()
+        unique_dns = df_upload["DN#"].dropna().nunique()
 
-unique_sids = df_upload["SID"].dropna().nunique()
-unique_pos = df_upload["Purchase order no."].dropna().nunique()
-unique_dns = df_upload["DN#"].dropna().nunique()
+        ifc_pos = (
+            upload_merged.loc[upload_merged["Destination ID"] == "XD16", "Purchase order no."]
+            .dropna()
+            .nunique()
+        )
 
-ifc_pos = (
-    upload_merged.loc[upload_merged["Destination ID"] == "XD16", "Purchase order no."]
-    .dropna()
-    .nunique()
-)
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("DOCX generated", docx_generated)
+        k2.metric("Unique SIDs", unique_sids)
+        k3.metric("Unique POs", unique_pos)
+        k4.metric("Unique Deliveries", unique_dns)
+        k5.metric("IFC POs", ifc_pos)
 
-k1, k2, k3, k4, k5 = st.columns(5)
+        warning_df = build_missing_bol_reason_table(
+            df_upload_planex=df_upload_planex,
+            df_upload=df_upload,
+            df_copy=df_copy,
+            merged_df=merged_df,
+            upload_merged=upload_merged,
+            df_bol=df_bol
+        )
 
-k1.metric("DOCX generated", docx_generated)
-k2.metric("Unique SIDs", unique_sids)
-k3.metric("Unique POs", unique_pos)
-k4.metric("Unique Deliveries", unique_dns)
-k5.metric("IFC POs", ifc_pos)
-# ============================================
+        if not warning_df.empty:
+            st.warning(f"{len(warning_df)} accepted Shipment ID(s) did not generate a BOL.")
+            st.dataframe(warning_df, use_container_width=True)
+        else:
+            st.info("All accepted Shipment IDs generated a BOL.")
 
+        with st.expander("BOL Summary"):
+            st.dataframe(df_bol, use_container_width=True)
 
-# ================= WARNING BLOCK =================
-warning_df = build_missing_bol_reason_table(
-    df_upload_planex=df_upload_planex,
-    df_upload=df_upload,
-    df_copy=df_copy,
-    merged_df=merged_df,
-    upload_merged=upload_merged,
-    df_bol=df_bol
-)
+        st.download_button(
+            label="Download ZIP of BOL files",
+            data=zip_buffer,
+            file_name="BOL_created.zip",
+            mime="application/zip"
+        )
 
-if not warning_df.empty:
-    st.warning(f"{len(warning_df)} accepted Shipment ID(s) did not generate a BOL.")
-    st.dataframe(warning_df, use_container_width=True)
-else:
-    st.info("All accepted Shipment IDs generated a BOL.")
-# =================================================
-
-
-# ================= OPTIONAL PREVIEW =================
-with st.expander("BOL Summary"):
-    st.dataframe(df_bol, use_container_width=True)
-# ===================================================
-
-
-# ================= DOWNLOAD BUTTONS =================
-st.download_button(
-    label="Download ZIP of BOL files",
-    data=zip_buffer,
-    file_name="BOL_created.zip",
-    mime="application/zip"
-)
-
-st.download_button(
-    label="Download Excel report",
-    data=excel_report,
-    file_name="BOL_report.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-# ===================================================
+        st.download_button(
+            label="Download Excel report",
+            data=excel_report,
+            file_name="BOL_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
         st.exception(e)
