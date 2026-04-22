@@ -14,7 +14,7 @@ from lxml import etree
 # PAGE CONFIG
 # =========================================================
 st.set_page_config(
-    page_title="BOL Generator",
+    page_title="RDC orders - BOL Generator",
     page_icon="📦",
     layout="wide"
 )
@@ -23,7 +23,7 @@ st.set_page_config(
 # CONSTANTS / ASSET PATHS
 # =========================================================
 BASE_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = BASE_DIR
+ASSETS_DIR = BASE_DIR / "assets"
 
 LTL_QTY_PATH = ASSETS_DIR / "LTL_qty.xlsx"
 RDC_LIST_PATH = ASSETS_DIR / "RDC_list.xlsx"
