@@ -1,1 +1,7 @@
-streamlitpandasnumpyopenpyxlxlsxwriterstreamlit==1.27.0pandas==2.1.0numpy==1.26.0openpyxl==3.1.2xlsxwriter==3.1.0
+streamlit==1.39.0
+pandas==2.2.2
+numpy==1.26.4
+openpyxl==3.1.5
+xlsxwriter==3.2.0
+python-docx==1.1.2
+lxml==5.3.0
