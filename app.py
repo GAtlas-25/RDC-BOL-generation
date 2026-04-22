@@ -580,24 +580,26 @@ if run:
 
         st.success(f"Done. Generated {len(doc_buffers)} shipment document(s).")
 
+       # KPI BLOCK
         docx_generated = len(doc_buffers)
+
         unique_sids = df_upload["SID"].dropna().nunique()
-        lines_to_ship = len(df_upload)
         unique_pos = df_upload["Purchase order no."].dropna().nunique()
-        total_deliveries = df_upload["DN#"].dropna().nunique()
+        unique_dns = df_upload["DN#"].dropna().nunique()
+
         ifc_pos = (
             upload_merged.loc[upload_merged["Destination ID"] == "XD16", "Purchase order no."]
             .dropna()
             .nunique()
         )
 
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1, k2, k3, k4, k5 = st.columns(5)
+
         k1.metric("DOCX generated", docx_generated)
         k2.metric("Unique SIDs", unique_sids)
-        k3.metric("Lines to ship", lines_to_ship)
-        k4.metric("Unique POs", unique_pos)
-        k5.metric("Total deliveries", total_deliveries)
-        k6.metric("IFC POs", ifc_pos)
+        k3.metric("Unique POs", unique_pos)
+        k4.metric("Unique Deliveries", unique_dns)
+        k5.metric("IFC POs", ifc_pos)
 
         generated_sids = set(df_bol["SID"].dropna().astype(str).str.strip().unique())
         accepted_sids = set(df_upload_planex["Shipment ID"].dropna().astype(str).str.strip().unique())
