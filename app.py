@@ -26,11 +26,11 @@ BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR
 
 LTL_QTY_PATH = ASSETS_DIR / "LTL_qty.xlsx"
-RDC_LIST_PATH = ASSETS_DIR / "RDC_list.xlsx"
-CARRIER_MAP_PATH = ASSETS_DIR / "Carrier_List_2025_RDC.xlsx"
+RDC_LIST_PATH = ASSETS_DIR / "RDC_list.XLSX"
+CARRIER_MAP_PATH = ASSETS_DIR / "Carrier List 2025 RDC.xlsx"
 CUBE_PATH = ASSETS_DIR / "Cube_mapping.xlsx"
 BOL_TEMPLATE_PATH = ASSETS_DIR / "BOL_RDC_template.docx"
-MANIFEST_TEMPLATE_PATH = ASSETS_DIR / "Master_Manifest_template.docx"
+MANIFEST_TEMPLATE_PATH = ASSETS_DIR / "Master Manifest_template.docx"
 
 MAX_TEMPLATE_ROWS = 5
 
