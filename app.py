@@ -23,7 +23,7 @@ st.set_page_config(
 # CONSTANTS / ASSET PATHS
 # =========================================================
 BASE_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = BASE_DIR / "assets"
+ASSETS_DIR = BASE_DIR
 
 LTL_QTY_PATH = ASSETS_DIR / "LTL_qty.xlsx"
 RDC_LIST_PATH = ASSETS_DIR / "RDC_list.xlsx"
