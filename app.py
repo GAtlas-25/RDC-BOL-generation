@@ -178,17 +178,19 @@ def _fill_detail_row(table_row, rd):
     for j, val in enumerate(cell_values):
         if j < len(cells):
             cell = cells[j]
-            for k, p in enumerate(cell.paragraphs):
-                if k == 0:
-                    if p.runs:
-                        p.runs[0].text = val
-                        for run in p.runs[1:]:
-                            run.text = ""
-                    else:
-                        p.text = val
-                else:
-                    for run in p.runs:
-                        run.text = ""
+
+            # Ensure at least one paragraph exists
+            if not cell.paragraphs:
+                p = cell.add_paragraph()
+            else:
+                p = cell.paragraphs[0]
+
+        # Set clean text (removes old runs automatically)
+        p.text = str(val)
+
+        # Remove ALL extra paragraphs (this removes the blank line issue)
+        for extra_p in cell.paragraphs[1:]:
+            extra_p._element.getparent().remove(extra_p._element)
 
 
 def _clear_detail_row(table_row):
