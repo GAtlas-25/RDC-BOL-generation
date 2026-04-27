@@ -504,7 +504,6 @@ def build_missing_bol_reason_table(
 
     open_order_sids = set(df_upload["SID"].dropna().astype(str).str.strip().unique())
     after_ltl_merge_sids = set(df_copy["SID"].dropna().astype(str).str.strip().unique())
-    after_carrier_filter_sids = set(merged_df["SID"].dropna().astype(str).str.strip().unique())
     after_planex_merge_sids = set(upload_merged["SID"].dropna().astype(str).str.strip().unique())
 
     rows = []
@@ -522,8 +521,6 @@ def build_missing_bol_reason_table(
                 reason = "Missing carrier mapping (SCAC not found)"
             else:
                 reason = "Present in merged data but no BOL created"
-        elif sid not in after_planex_merge_sids:
-            reason = "Dropped before/at Planex merge"
         else:
             reason = "Present in merged data but no BOL created"
 
