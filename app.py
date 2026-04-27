@@ -248,6 +248,7 @@ def read_multiple_planex_csv(planex_files):
     cols = {
         "Shipment ID": str,
         "Destination ID": str,
+        "Carrier Code": str,
         "Weight": float,
         "Cube": float,
         "Quantity": float
@@ -266,6 +267,7 @@ def read_multiple_planex_csv(planex_files):
     df_upload_planex["Weight"] = df_upload_planex["Weight"].fillna(0).astype(int)
     df_upload_planex["Cube"] = df_upload_planex["Cube"].fillna(0).astype(int)
     df_upload_planex["Quantity"] = df_upload_planex["Quantity"].fillna(0).astype(int)
+    df_upload_planex["Carrier Code"] = df_upload_planex["Carrier Code"].astype(str).str.strip()
 
     return df_upload_planex
 
@@ -296,7 +298,6 @@ def read_multiple_open_orders_excel(order_files):
     df_upload = df_upload.drop_duplicates()
 
     df_upload = df_upload[df_upload["SID"].notna()]
-    df_upload = df_upload[df_upload["Carrier"].notna()]
     df_upload = df_upload[df_upload["DN#"].notna()]
     df_upload = df_upload.reset_index(drop=True)
 
@@ -354,7 +355,7 @@ def process_bol_files(planex_files, order_files):
     df_copy["Gross weight"] = df_copy["Gross weight"].fillna(0).round().astype(int)
     df_copy["Gross weight"] = df_copy["Gross weight"] + df_copy["Pallet_qty"] * 40
 
-    df = pd.merge(
+    merged_df = pd.merge(
         df_copy,
         rdc_list_df,
         left_on="Customer",
@@ -362,33 +363,9 @@ def process_bol_files(planex_files, order_files):
         how="left"
     )
 
-    df["Carrier"] = (
-        df["Carrier"]
-        .astype(str)
-        .str.strip()
-        .str.split("/", n=1).str[0]
-    )
-
-    code_to_scac = dict(zip(
-        carrier_df["Code"].astype(str),
-        carrier_df["SCAC Code"]
-    ))
-
-    df["Carrier"] = df["Carrier"].apply(
-        lambda x: code_to_scac.get(x, x) if str(x).isdigit() else x
-    )
-
-    merged_df = pd.merge(
-        df,
-        carrier_df[["SCAC Code", "Carrier"]],
-        left_on="Carrier",
-        right_on="SCAC Code",
-        how="left"
-    )
-    merged_df = merged_df.rename(columns={"Carrier_y": "Carrier_mapped"})
-    merged_df = merged_df[merged_df["SCAC Code"].notna()]
-
-    df_dest = df_upload_planex[["Shipment ID", "Destination ID", "Pickup Date", "Weight", "Cube", "Quantity"]]
+    df_dest = df_upload_planex[["Shipment ID", "Destination ID", "Pickup Date", "Carrier Code", "Weight", "Cube", "Quantity"]].copy()
+    df_dest = df_dest.rename(columns={"Carrier Code": "SCAC Code"})
+    df_dest["SCAC Code"] = df_dest["SCAC Code"].astype(str).str.strip()
 
     upload_merged = pd.merge(
         merged_df,
@@ -397,6 +374,14 @@ def process_bol_files(planex_files, order_files):
         right_on="Shipment ID",
         how="left"
     )
+
+    upload_merged = pd.merge(
+        upload_merged,
+        carrier_df[["SCAC Code", "Carrier"]],
+        on="SCAC Code",
+        how="left"
+    )
+    upload_merged = upload_merged.rename(columns={"Carrier": "Carrier_mapped"})
 
     upload_merged = pd.merge(
         upload_merged,
