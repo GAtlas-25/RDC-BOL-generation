@@ -174,23 +174,22 @@ def _fill_detail_row(table_row, rd):
         rd["qty"], rd["haz"], rd["weight"], rd["cube"],
         rd["pct_truck"], rd["case"], rd["exp_pallets"], rd["rec_pallets"]
     ]
+
     cells = table_row.cells
+
     for j, val in enumerate(cell_values):
         if j < len(cells):
             cell = cells[j]
 
-            # Ensure at least one paragraph exists
             if not cell.paragraphs:
                 p = cell.add_paragraph()
             else:
                 p = cell.paragraphs[0]
 
-        # Set clean text (removes old runs automatically)
-        p.text = str(val)
+            p.text = str(val)
 
-        # Remove ALL extra paragraphs (this removes the blank line issue)
-        for extra_p in cell.paragraphs[1:]:
-            extra_p._element.getparent().remove(extra_p._element)
+            for extra_p in cell.paragraphs[1:]:
+                extra_p._element.getparent().remove(extra_p._element)
 
 
 def _clear_detail_row(table_row):
@@ -515,8 +514,14 @@ def build_missing_bol_reason_table(
             reason = "No matching SID in RDC Open Orders"
         elif sid not in after_ltl_merge_sids:
             reason = "Dropped in LTL qty merge (missing material mapping)"
-        elif sid not in after_carrier_filter_sids:
-            reason = "Dropped after carrier mapping (missing SCAC/carrier match)"
+        elif sid not in after_planex_merge_sids:
+            reason = "Missing in Planex merge"
+        elif sid in after_planex_merge_sids:
+            sid_subset = upload_merged[upload_merged["SID"].astype(str).str.strip() == sid]
+            if sid_subset["Carrier_mapped"].isna().all():
+                reason = "Missing carrier mapping (SCAC not found)"
+            else:
+                reason = "Present in merged data but no BOL created"
         elif sid not in after_planex_merge_sids:
             reason = "Dropped before/at Planex merge"
         else:
