@@ -373,6 +373,8 @@ def process_bol_files(planex_files, order_files):
         right_on="Shipment ID",
         how="left"
     )
+    
+    upload_merged = upload_merged.drop(columns=["Carrier"], errors="ignore")
 
     upload_merged = pd.merge(
         upload_merged,
