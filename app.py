@@ -122,10 +122,12 @@ def build_po_summary(sid, upload_merged):
             "Codice RDC": "first",
             "Carrier_mapped": "first",
             "SCAC Code": "first",
-            "Cube_po": "sum"
+            "Cube_po": "sum",
+            "Pallet_qty": "sum"
         })
     )
     po_summary["Gross weight"] = po_summary["Gross weight"].astype(int)
+    po_summary["Pallet_qty"] = po_summary["Pallet_qty"].astype(int)
     return po_summary
 
 
@@ -164,7 +166,7 @@ def _get_row_data_for_po(po_row):
         "pct_truck": "",
         "case": "",
         "exp_pallets": "",
-        "rec_pallets": "",
+        "rec_pallets": str(int(po_row["Pallet_qty"]))
     }
 
 
