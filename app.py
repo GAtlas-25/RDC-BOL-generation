@@ -165,8 +165,8 @@ def _get_row_data_for_po(po_row):
         "cube": f"{int(po_row['Cube_po']):,}",
         "pct_truck": "",
         "case": "",
-        "exp_pallets": "",
-        "rec_pallets": str(int(po_row["Pallet_qty"]))
+        "exp_pallets": str(int(po_row["Pallet_qty"])),
+        "rec_pallets": ""
     }
 
 
