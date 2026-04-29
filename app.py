@@ -663,6 +663,19 @@ if run:
         else:
             st.info("All accepted Shipment IDs generated a BOL.")
 
+        ## Warning if Destination ID is different than known ones
+        valid_dest = df_bol["Destination ID"].astype(str).str.strip()
+        unexpected_dest = df_bol[
+            ~valid_dest.eq("XD16") & ~valid_dest.str.match(r"^\d+$")
+        ][["SID", "Destination ID", "Carrier_mapped", "RDC names", "Purchase order no."]]
+
+        if not unexpected_dest.empty:
+            st.warning(
+                f"⚠️ {len(unexpected_dest)} shipment(s) have an unexpected Destination ID "
+                f"(neither 'XD16' nor a numeric RDC code):"
+            )
+            st.dataframe(unexpected_dest, use_container_width=True)
+
         with st.expander("BOL Summary"):
             st.dataframe(df_bol, use_container_width=True)
 
