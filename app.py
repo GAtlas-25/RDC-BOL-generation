@@ -366,6 +366,9 @@ def process_bol_files(planex_files, order_files):
     df_dest = df_dest.rename(columns={"Carrier Code": "SCAC Code"})
     df_dest["SCAC Code"] = df_dest["SCAC Code"].astype(str).str.strip()
 
+    # Deduplicate to one row per SID — Weight/Cube/Carrier are shipment-level, not PO-level
+    df_dest = df_dest.drop_duplicates(subset=["Shipment ID", "Destination ID"])
+
     upload_merged = pd.merge(
         merged_df,
         df_dest,
@@ -438,6 +441,7 @@ def generate_documents(df_bol, upload_merged):
         for _, row in shipment_rows.iterrows():
             replacements = {
                 "{{SHIPMENT ID}}": sid,
+                "{{PICKUP}}": row.get("Pickup Date", ""),
                 "{{CARRIER NAME}}": row.get("Carrier_mapped", ""),
                 "{{RDC NAME}}": row.get("RDC names", ""),
                 "{{ADRESS}}": row.get("Adress", ""),
