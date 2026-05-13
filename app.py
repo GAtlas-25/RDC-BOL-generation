@@ -401,6 +401,8 @@ def process_bol_files(planex_files, order_files):
     upload_merged["Cube_po"] = upload_merged["Cube_sku"] * upload_merged["Pallet_qty"]
     upload_merged["Cube_po"] = upload_merged["Cube_po"].fillna(0).round().astype(int)
 
+    upload_merged = upload_merged.drop_duplicates()
+
     df_bol = (
         upload_merged
         .groupby(["SID", "RDC names", "Destination ID"], as_index=False)
