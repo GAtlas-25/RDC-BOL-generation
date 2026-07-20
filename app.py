@@ -354,7 +354,6 @@ def process_bol_files(planex_files, order_files):
     df_copy["Pallet_qty"] = np.ceil(df_copy["Order Quantity"] / df_copy["Case_Pallet"])
     df_copy["Gross weight"] = df_copy["Gross weight"] * 2.20462
     df_copy["Gross weight"] = df_copy["Gross weight"].fillna(0).round().astype(int)
-    df_copy["Gross weight"] = df_copy["Gross weight"] + df_copy["Pallet_qty"] * 40
 
     merged_df = pd.merge(
         df_copy,
