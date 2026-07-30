@@ -26,7 +26,7 @@ ASSETS_DIR = BASE_DIR
 
 LTL_QTY_PATH = ASSETS_DIR / "LTL_qty.xlsx"
 RDC_LIST_PATH = ASSETS_DIR / "RDC_list.xlsx"
-CARRIER_MAP_PATH = ASSETS_DIR / "Carrier List 2025 RDC.xlsx"
+CARRIER_MAP_PATH = ASSETS_DIR / "Carrier List 2026 07.29.26.xlsx"
 CUBE_PATH = ASSETS_DIR / "Cube_mapping.xlsx"
 BOL_TEMPLATE_PATH = ASSETS_DIR / "BOL_RDC_template.docx"
 MANIFEST_TEMPLATE_PATH = ASSETS_DIR / "Master Manifest_template.docx"
