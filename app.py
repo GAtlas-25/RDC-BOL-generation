@@ -300,6 +300,7 @@ def read_multiple_open_orders_excel(order_files):
 
     df_upload = df_upload[df_upload["SID"].notna()]
     df_upload = df_upload[df_upload["DN#"].notna()]
+    df_upload['Material'] = df_upload['Material'].astype(str).str.strip()
     df_upload = df_upload.reset_index(drop=True)
 
     return df_upload
@@ -307,7 +308,7 @@ def read_multiple_open_orders_excel(order_files):
 
 def load_reference_files():
     ltl_qty_df = pd.read_excel(LTL_QTY_PATH)
-    ltl_qty_df["SAP Code"] = ltl_qty_df["SAP Code"].astype(str)
+    ltl_qty_df["SAP Code"] = ltl_qty_df["SAP Code"].astype(str).str.strip()
 
     rdc_list_df = pd.read_excel(
         RDC_LIST_PATH,
