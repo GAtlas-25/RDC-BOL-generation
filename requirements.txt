@@ -1,9 +1,7 @@
-streamlit==1.58.0
-starlette==1.3.1
-pandas==2.3.2
-numpy==2.3.2
-pyarrow==24.0.0
-openpyxl==3.1.5
+streamlit
+pandas
+numpy
+openpyxl
 xlsxwriter
 python-docx
 lxml
