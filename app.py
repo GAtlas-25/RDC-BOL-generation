@@ -130,7 +130,7 @@ def build_po_summary(sid, upload_merged):
     po_summary["Gross weight"] = po_summary["Gross weight"].fillna(0)
     po_summary["Gross weight"] = (po_summary["Gross weight"] * 2.205 + 
                                   sid_df.groupby("Purchase order no.")["Pallet_qty"].first() * 46).round(0).astype(int)
-    po_summary["Pallet_qty"] = po_summary["Pallet_qty"].astype(int)
+    po_summary["Pallet_qty"] = po_summary["Pallet_qty"].fillna(0).astype(int)
     return po_summary
 
 
