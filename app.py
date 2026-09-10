@@ -127,6 +127,7 @@ def build_po_summary(sid, upload_merged):
         })
     )
     # Convert from kg to lbs + add pallet weight
+    po_summary["Gross weight"] = po_summary["Gross weight"]*2.205 + po_summary["Pallet_qty"]*46
     po_summary["Gross weight"] = po_summary["Gross weight"].astype(int)
     po_summary["Pallet_qty"] = po_summary["Pallet_qty"].fillna(0).astype(int)
     return po_summary
