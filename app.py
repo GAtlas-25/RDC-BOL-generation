@@ -135,11 +135,14 @@ def build_manifest_replacements(sid, po_summary, carrier_name, scac, shipment_ro
     pickup_date = pd.to_datetime(shipment_rows["Pickup Date"].iloc[0], errors="coerce")
     delivery_date = pickup_date + pd.Timedelta(days=1) if pd.notna(pickup_date) else pd.NaT
 
+    # instead of using tot weight from VPX, sum the POs weight from SAP
+    total_weight = po_summary["Gross weight"].sum()
+
     replacements = {
         "{{SID}}": sid,
         "{{CARRIER NAME}}": carrier_name,
         "{{SCAC}}": scac,
-        "{{TOTWEIGHT}}": f"{int(shipment_rows['Weight'].iloc[0]):,}",
+        "{{TOTWEIGHT}}": f"{int(total_weight):,}",
         "{{TOTCUBE}}": f"{int(shipment_rows['Cube'].iloc[0]):,}",
         "{{PICKUP}}": pickup_date.strftime("%m/%d/%Y") if pd.notna(pickup_date) else "",
         "{{DELIVERY}}": delivery_date.strftime("%m/%d/%Y") if pd.notna(delivery_date) else "",
@@ -351,10 +354,8 @@ def process_bol_files(planex_files, order_files):
         right_on="SAP Code",
         how="inner"
     )
-
+    # pallet quantity
     df_copy["Pallet_qty"] = np.ceil(df_copy["Order Quantity"] / df_copy["Case_Pallet"])
-    df_copy["Gross weight"] = df_copy["Gross weight"] * 2.20462
-    df_copy["Gross weight"] = df_copy["Gross weight"].fillna(0).round().astype(int)
 
     merged_df = pd.merge(
         df_copy,
@@ -414,7 +415,7 @@ def process_bol_files(planex_files, order_files):
             "Zip Code": "first",
             "SCAC Code": "first",
             "Order Quantity": "sum",
-            "Gross weight": "sum",
+            "Gross weight": "sum", # in kg
             "Pallet_qty": "sum",
             "Weight": "first",
             "Cube": "first",
@@ -424,8 +425,11 @@ def process_bol_files(planex_files, order_files):
             "DN#": lambda s: ", ".join([x for x in pd.unique(s.astype(str)) if x and x.lower() != "nan"]),
         })
     )
-
-    df_bol["Gross weight"] = df_bol["Gross weight"].astype(int)
+    
+    # convert weight in lbs - i do it here and not before the grouping to avoid rounding issues that might slightly change the actual total
+    df_bol["Gross weight"] = df_bol["Gross weight"] * 2.205 + df_bol["Pallet_qty"]*46 ## pallet weight times count of pallets
+    df_bol["Gross weight"] = df_bol["Gross weight"].fillna(0).round().astype(int)
+    
     df_bol["Order Quantity"] = df_bol["Order Quantity"].astype(int)
     df_bol["Pallet_qty"] = df_bol["Pallet_qty"].astype(int)
 
