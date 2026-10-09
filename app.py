@@ -24,7 +24,7 @@ st.set_page_config(
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR
 
-LTL_QTY_PATH = ASSETS_DIR / "LTL_qty.xlsx"
+LTL_QTY_PATH = ASSETS_DIR / "LTL_qty_updated_7.28.26.xlsx"
 RDC_LIST_PATH = ASSETS_DIR / "RDC_list.xlsx"
 CARRIER_MAP_PATH = ASSETS_DIR / "Carrier List 2026 07.29.26.xlsx"
 CUBE_PATH = ASSETS_DIR / "Cube_mapping.xlsx"
