@@ -567,7 +567,7 @@ def build_missing_bol_reason_table(
 # =========================================================
 # STREAMLIT UI
 # =========================================================
-st.title("📦 BOL Generator")
+st.title("📦 BOL Generator - DEV")
 st.caption("Generate BOL Word documents and Master Manifests from uploaded files.")
 
 with st.sidebar:
