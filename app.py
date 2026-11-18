@@ -35,7 +35,13 @@ MANIFEST_TEMPLATE_PATH = ASSETS_DIR / "Master Manifest_template.docx"
 MAX_TEMPLATE_ROWS = 5
 MAX_TRUCK_WEIGHT_LBS = 44000
 INT_TRUCK_WEIGHT_LBS = 42500
-TRUCK_ANALYSIS_VERSION = 4
+MAX_FLOOR_UNITS_PER_TRUCK = 24
+STACKABLE_MATERIALS = {"610010005394", "610010005396"}
+STACKABLE_MATERIAL_INDEX = {
+    material: index
+    for index, material in enumerate(sorted(STACKABLE_MATERIALS))
+}
+TRUCK_ANALYSIS_VERSION = 5
 TRUCK_SPLIT_COLUMNS = [
     "SID",
     "DN#",
@@ -51,7 +57,8 @@ TRUCK_SPLIT_COLUMNS = [
     "Sales unit",
     "Order Quantity",
     "Gross weight (kg)",
-    "Gross weight (lbs)"
+    "Gross weight (lbs)",
+    "Floor Units"
 ]
 TRUCK_SPLIT_INPUT_COLUMNS = [
     "Purchase order no.",
@@ -336,6 +343,10 @@ def read_multiple_open_orders_excel(order_files, bol_rows_only=True):
             str(column).strip().lstrip("\ufeff")
             for column in temp.columns
         ]
+        temp = temp.rename(columns={
+            "Sales Doc.": "Sales document",
+            "SU": "Sales unit"
+        })
         for col in cols_as_str.keys():
             if col in temp.columns:
                 temp[col] = temp[col].map(_normalize_open_order_value)
@@ -496,27 +507,68 @@ def build_planex_po_pairs(df_planex):
     ).drop_duplicates()
 
 
-def _pack_order_lines(line_weights, weight_limit):
+def _pack_order_lines(
+    line_weights,
+    materials,
+    pallet_quantities,
+    weight_limit,
+    floor_unit_limit
+):
     line_weights = [int(np.ceil(round(weight, 6))) for weight in line_weights]
-    reachable = {0: None}
     nodes = []
-    selected_lines = {
-        line_index for line_index, line_weight in enumerate(line_weights)
-        if line_weight == 0
-    }
+    reachable = {(0, 0): (0, None)}
 
-    for line_index, line_weight in enumerate(line_weights):
-        if line_weight <= 0 or line_weight > weight_limit:
+    for line_index, (line_weight, material, pallet_quantity) in enumerate(
+        zip(line_weights, materials, pallet_quantities)
+    ):
+        pallet_quantity = int(np.ceil(pallet_quantity))
+        if line_weight < 0 or line_weight > weight_limit or pallet_quantity < 0:
             continue
 
-        for current_weight, previous_node in list(reachable.items()):
+        stackable_index = STACKABLE_MATERIAL_INDEX.get(str(material))
+        for (current_weight, stackable_parity), (
+            current_floor_units,
+            previous_node
+        ) in list(reachable.items()):
             new_weight = current_weight + line_weight
-            if new_weight <= weight_limit and new_weight not in reachable:
-                nodes.append((line_index, previous_node))
-                reachable[new_weight] = len(nodes) - 1
+            if new_weight > weight_limit:
+                continue
 
-    best_weight = max(reachable)
-    node_index = reachable[best_weight]
+            if stackable_index is None:
+                added_floor_units = pallet_quantity
+                new_parity = stackable_parity
+            else:
+                bit = 1 << stackable_index
+                current_parity = int(bool(stackable_parity & bit))
+                next_parity = (current_parity + pallet_quantity) % 2
+                added_floor_units = (
+                    int(np.ceil((current_parity + pallet_quantity) / 2))
+                    - current_parity
+                )
+                new_parity = (
+                    stackable_parity & ~bit
+                ) | (next_parity * bit)
+
+            new_floor_units = current_floor_units + added_floor_units
+            if new_floor_units > floor_unit_limit:
+                continue
+
+            state = (new_weight, new_parity)
+            existing = reachable.get(state)
+            if existing is None or new_floor_units < existing[0]:
+                nodes.append((line_index, previous_node))
+                reachable[state] = (new_floor_units, len(nodes) - 1)
+
+    best_weight = max(weight for weight, _ in reachable)
+    _, node_index = min(
+        (
+            (floor_units, node_index)
+            for (weight, _), (floor_units, node_index) in reachable.items()
+            if weight == best_weight
+        ),
+        key=lambda state: state[0]
+    )
+    selected_lines = set()
     while node_index is not None:
         line_index, node_index = nodes[node_index]
         selected_lines.add(line_index)
@@ -525,6 +577,36 @@ def _pack_order_lines(line_weights, weight_limit):
         selected_lines.add(0)
 
     return selected_lines
+
+
+def _assign_floor_units_by_truck(split_rows):
+    floor_units = pd.Series(index=split_rows.index, dtype="Int64")
+    group_columns = ["Shipment ID", "Truck", "Material"]
+    for (_, _, material), rows in split_rows.groupby(
+        group_columns,
+        dropna=False,
+        sort=False
+    ):
+        pallets = pd.to_numeric(rows["Pallet_qty"], errors="coerce")
+        if pallets.isna().any():
+            continue
+
+        pallet_counts = pallets.astype(int)
+        if str(material) in STACKABLE_MATERIALS:
+            row_floor_units = pallet_counts // 2
+            extra_floor_units = (
+                int(np.ceil(pallet_counts.sum() / 2))
+                - int(row_floor_units.sum())
+            )
+            rows_with_unpaired_pallets = pallet_counts[pallet_counts % 2 == 1]
+            row_floor_units.loc[
+                rows_with_unpaired_pallets.index[:extra_floor_units]
+            ] += 1
+        else:
+            row_floor_units = pallet_counts
+        floor_units.loc[rows.index] = row_floor_units.astype(int)
+
+    return floor_units
 
 
 def build_truck_split_output(order_weights, planex_pairs, ambiguous_pos, truck_summary):
@@ -557,20 +639,35 @@ def build_truck_split_output(order_weights, planex_pairs, ambiguous_pos, truck_s
         truck_names = {row_index: "Truck 1" for row_index in sid_rows.index}
         if shipment_id in summary_by_sid.index:
             shipment_summary = summary_by_sid.loc[shipment_id]
-            if (
-                shipment_summary["Status"] == "Overweight"
-                and pd.notna(shipment_summary["Weight limit (lbs)"])
-            ):
+            needs_weight_split = shipment_summary["Status"] == "Overweight"
+            needs_floor_unit_split = (
+                pd.notna(shipment_summary["Total FUs"])
+                and shipment_summary["Total FUs"] > MAX_FLOOR_UNITS_PER_TRUCK
+            )
+            if needs_weight_split or needs_floor_unit_split:
                 remaining_rows = list(sid_rows.index)
                 truck_number = 1
-                weight_limit = int(shipment_summary["Weight limit (lbs)"])
+                weight_limit = shipment_summary["Weight limit (lbs)"]
+                if pd.isna(weight_limit):
+                    weight_limit = MAX_TRUCK_WEIGHT_LBS
+                weight_limit = int(weight_limit)
 
                 while remaining_rows:
                     weights = split_rows.loc[remaining_rows, "Weight (lbs)"]
-                    if weights.isna().any():
+                    pallet_quantities = split_rows.loc[
+                        remaining_rows,
+                        "Pallet_qty"
+                    ]
+                    if weights.isna().any() or pallet_quantities.isna().any():
                         break
 
-                    selected_positions = _pack_order_lines(weights.tolist(), weight_limit)
+                    selected_positions = _pack_order_lines(
+                        weights.tolist(),
+                        split_rows.loc[remaining_rows, "Material"].tolist(),
+                        pallet_quantities.tolist(),
+                        weight_limit,
+                        MAX_FLOOR_UNITS_PER_TRUCK
+                    )
                     selected_rows = [
                         remaining_rows[position]
                         for position in selected_positions
@@ -592,6 +689,7 @@ def build_truck_split_output(order_weights, planex_pairs, ambiguous_pos, truck_s
     split_rows.loc[split_rows["SID"].eq(""), "Truck"] = "Unassigned"
     split_rows["Gross weight (kg)"] = split_rows["Gross weight"]
     split_rows["Gross weight (lbs)"] = split_rows["Weight (lbs)"].round().astype("Int64")
+    split_rows["Floor Units"] = _assign_floor_units_by_truck(split_rows)
     shipment_order = {
         shipment_id: order
         for order, shipment_id in enumerate(split_rows["SID"].drop_duplicates())
@@ -675,6 +773,38 @@ def build_truck_load_summary(df_planex, df_orders, ltl_qty_df, carrier_df):
             "Weight data issue": "max"
         })
     )
+    floor_unit_rows = order_weights.merge(
+        unique_pairs[unique_pairs["Purchase order no."].isin(open_order_pos)],
+        on="Purchase order no.",
+        how="inner"
+    )
+    floor_units_by_material = (
+        floor_unit_rows
+        .groupby(["Shipment ID", "Material"], as_index=False, dropna=False)
+        .agg({
+            "Pallet_qty": lambda pallets: pallets.sum(min_count=1),
+            "Weight data issue": "any"
+        })
+    )
+    floor_units_by_material["Floor Units"] = np.where(
+        floor_units_by_material["Material"].astype(str).isin(STACKABLE_MATERIALS),
+        np.ceil(floor_units_by_material["Pallet_qty"] / 2),
+        floor_units_by_material["Pallet_qty"]
+    )
+    floor_units_by_material.loc[
+        floor_units_by_material["Weight data issue"],
+        "Floor Units"
+    ] = np.nan
+    shipment_floor_units = (
+        floor_units_by_material
+        .groupby("Shipment ID", as_index=False)
+        .agg({
+            "Floor Units": lambda values: (
+                values.sum() if values.notna().all() else np.nan
+            )
+        })
+        .rename(columns={"Floor Units": "Total FUs"})
+    )
 
     shipment_carriers = df_planex[["Shipment ID", "Carrier Code"]].copy()
     shipment_carriers["Shipment ID"] = shipment_carriers["Shipment ID"].astype(str).str.strip()
@@ -730,6 +860,21 @@ def build_truck_load_summary(df_planex, df_orders, ltl_qty_df, carrier_df):
         on="Shipment ID",
         how="left"
     )
+    truck_summary = truck_summary.merge(
+        shipment_floor_units,
+        on="Shipment ID",
+        how="left"
+    )
+    truck_summary["Total FUs"] = truck_summary["Total FUs"].astype("Int64")
+    truck_summary["FU status"] = np.select(
+        [
+            truck_summary["Total FUs"].isna(),
+            truck_summary["Total FUs"].gt(MAX_FLOOR_UNITS_PER_TRUCK)
+        ],
+        ["Incomplete FU data", "Over 24 FUs"],
+        default="Within limit"
+    )
+    truck_summary["FU limit"] = MAX_FLOOR_UNITS_PER_TRUCK
     truck_summary["Carrier Code"] = truck_summary["Carrier Code"].fillna("Unmapped")
     truck_summary["Type of Carr"] = truck_summary["Type of Carr"].fillna("Unmapped")
 
@@ -773,7 +918,12 @@ def build_truck_load_summary(df_planex, df_orders, ltl_qty_df, carrier_df):
     truck_summary.insert(
         0,
         "Approved",
-        np.where(truck_summary["Status"].eq("Within limit"), "Yes", "No")
+        np.where(
+            truck_summary["Status"].eq("Within limit")
+            & truck_summary["FU status"].eq("Within limit"),
+            "Yes",
+            "No"
+        )
     )
 
     truck_split_output = build_truck_split_output(
@@ -1218,7 +1368,9 @@ if missing_assets:
 st.subheader("Step 1: Analyze truck loads")
 st.caption(
     "Match each open-order PO to its Vendor Planex Shipment ID and check the total "
-    "against the mapped carrier type's weight rule. Shipment status is not used."
+    "against the mapped carrier type's weight rule and the 24-FU truck limit. "
+    "Only Unico Pearl 12x24 and Impero Black 12x24 pallets may be stacked. "
+    "Shipment status is not used."
 )
 
 input_signature = (
@@ -1238,7 +1390,7 @@ if analyze:
         st.warning("Please upload at least one RDC Open Orders Excel file.")
     else:
         try:
-            with st.spinner("Matching POs and calculating truck weights..."):
+            with st.spinner("Matching POs and calculating truck weights and Floor Units..."):
                 ltl_qty_df, _, carrier_df, _ = load_reference_files()
                 df_all_planex = read_multiple_planex_csv(planex_files, accepted_only=False)
                 df_all_orders = read_multiple_open_orders_excel(
@@ -1295,6 +1447,10 @@ if has_current_analysis:
             "Customer Service review: carrier type"
         ).sum()
         incomplete_count = truck_summary["Status"].eq("Incomplete weight data").sum()
+        over_floor_unit_count = truck_summary["FU status"].eq("Over 24 FUs").sum()
+        incomplete_floor_unit_count = truck_summary["FU status"].eq(
+            "Incomplete FU data"
+        ).sum()
         if overweight_count:
             st.warning(f"{overweight_count} truck(s) exceed their carrier weight limit.")
         if carrier_review_count:
@@ -1306,21 +1462,35 @@ if has_current_analysis:
             st.warning(
                 f"{incomplete_count} truck(s) have incomplete weight data; review the PO issues."
             )
-        if not overweight_count and not carrier_review_count and not incomplete_count:
+        if over_floor_unit_count:
+            st.warning(
+                f"{over_floor_unit_count} truck(s) exceed the limit of "
+                f"{MAX_FLOOR_UNITS_PER_TRUCK} Floor Units and will be split."
+            )
+        if incomplete_floor_unit_count:
+            st.warning("Floor Unit data is incomplete for one or more trucks.")
+        if (
+            not overweight_count
+            and not carrier_review_count
+            and not incomplete_count
+            and not over_floor_unit_count
+            and not incomplete_floor_unit_count
+        ):
             if truck_issues.empty:
-                st.success("All assigned trucks are within the weight limit.")
+                st.success("All assigned trucks are within the weight and Floor Unit limits.")
             else:
                 st.info(
-                    "Calculated truck loads are within the limit; review the PO issues "
+                    "Calculated truck loads are within the weight and Floor Unit limits; "
+                    "review the PO issues "
                     "before generating BOLs."
                 )
         st.dataframe(truck_summary, use_container_width=True)
 
     st.subheader("Truck split order lines")
     st.caption(
-        "The check table above shows the original loads. Below, overweight loads are "
-        "repacked from whole order lines as close to each truck's limit as possible "
-        "without exceeding it. BOTH TL/INT loads remain assigned for Customer Service review."
+        "Loads that exceed their weight limit or 24 Floor Units are repacked from whole "
+        "order lines. The split prioritizes maximizing truck weight without exceeding "
+        "either limit. BOTH TL/INT weight reviews remain flagged for Customer Service."
     )
     if not truck_split_output.empty:
         unassigned_rows = truck_split_output["Truck"].eq("Unassigned").sum()
@@ -1356,6 +1526,22 @@ if has_current_analysis:
                 "is too heavy to fit on a compliant truck."
             )
             st.dataframe(remaining_overweight, use_container_width=True)
+        split_truck_floor_units = (
+            truck_split_output[truck_split_output["Truck"] != "Unassigned"]
+            .groupby(["SID", "Truck"], as_index=False)
+            .agg({"Floor Units": "sum"})
+        )
+        remaining_over_floor_units = split_truck_floor_units[
+            split_truck_floor_units["Floor Units"].gt(
+                MAX_FLOOR_UNITS_PER_TRUCK
+            )
+        ]
+        if not remaining_over_floor_units.empty:
+            st.warning(
+                "Some split trucks still exceed 24 Floor Units because an order line "
+                "cannot be split."
+            )
+            st.dataframe(remaining_over_floor_units, use_container_width=True)
         st.dataframe(truck_split_output, use_container_width=True)
         truck_split_excel = create_truck_split_excel(truck_split_output)
         st.download_button(
