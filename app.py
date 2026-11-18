@@ -37,11 +37,12 @@ MAX_TRUCK_WEIGHT_LBS = 44000
 INT_TRUCK_WEIGHT_LBS = 42500
 MAX_FLOOR_UNITS_PER_TRUCK = 24
 STACKABLE_MATERIALS = {"610010005394", "610010005396"}
+MANUAL_WEIGHT_CUBE_REVIEW_MATERIALS = {"610110001491"}
 STACKABLE_MATERIAL_INDEX = {
     material: index
     for index, material in enumerate(sorted(STACKABLE_MATERIALS))
 }
-TRUCK_ANALYSIS_VERSION = 5
+TRUCK_ANALYSIS_VERSION = 7
 TRUCK_SPLIT_COLUMNS = [
     "SID",
     "DN#",
@@ -58,6 +59,8 @@ TRUCK_SPLIT_COLUMNS = [
     "Order Quantity",
     "Gross weight (kg)",
     "Gross weight (lbs)",
+    "Truck Total Weight (lbs)",
+    "Truck Total Cube (cu ft)",
     "Floor Units"
 ]
 TRUCK_SPLIT_INPUT_COLUMNS = [
@@ -689,6 +692,36 @@ def build_truck_split_output(order_weights, planex_pairs, ambiguous_pos, truck_s
     split_rows.loc[split_rows["SID"].eq(""), "Truck"] = "Unassigned"
     split_rows["Gross weight (kg)"] = split_rows["Gross weight"]
     split_rows["Gross weight (lbs)"] = split_rows["Weight (lbs)"].round().astype("Int64")
+    assigned_rows = (
+        split_rows["SID"].ne("")
+        & split_rows["Truck"].ne("Unassigned")
+    )
+    truck_weight_totals = split_rows.loc[assigned_rows].groupby(
+        ["SID", "Truck"]
+    )["Gross weight (lbs)"].transform(
+        lambda weights: weights.sum() if weights.notna().all() else pd.NA
+    )
+    split_rows["Truck Total Weight (lbs)"] = pd.Series(
+        pd.NA,
+        index=split_rows.index,
+        dtype="Int64"
+    )
+    split_rows.loc[
+        assigned_rows,
+        "Truck Total Weight (lbs)"
+    ] = truck_weight_totals.astype("Int64")
+    truck_cube_totals = split_rows.loc[assigned_rows].groupby(
+        ["SID", "Truck"]
+    )["Cube_po"].transform("sum")
+    split_rows["Truck Total Cube (cu ft)"] = pd.Series(
+        pd.NA,
+        index=split_rows.index,
+        dtype="Int64"
+    )
+    split_rows.loc[
+        assigned_rows,
+        "Truck Total Cube (cu ft)"
+    ] = truck_cube_totals.astype("Int64")
     split_rows["Floor Units"] = _assign_floor_units_by_truck(split_rows)
     shipment_order = {
         shipment_id: order
@@ -706,7 +739,7 @@ def build_truck_split_output(order_weights, planex_pairs, ambiguous_pos, truck_s
     return split_rows.reindex(columns=TRUCK_SPLIT_COLUMNS)
 
 
-def build_truck_load_summary(df_planex, df_orders, ltl_qty_df, carrier_df):
+def build_truck_load_summary(df_planex, df_orders, ltl_qty_df, carrier_df, df_cube):
     planex_pairs = build_planex_po_pairs(df_planex)
 
     orders = df_orders.copy()
@@ -724,12 +757,22 @@ def build_truck_load_summary(df_planex, df_orders, ltl_qty_df, carrier_df):
         right_on="SAP Code",
         how="left"
     )
+    order_weights = order_weights.merge(
+        df_cube[["Cod_articolo", "Cube_sku"]],
+        left_on="Material",
+        right_on="Cod_articolo",
+        how="left"
+    )
     order_weights["Gross weight"] = pd.to_numeric(order_weights["Gross weight"], errors="coerce")
     order_weights["Order Quantity"] = pd.to_numeric(order_weights["Order Quantity"], errors="coerce")
     order_weights["Case_Pallet"] = pd.to_numeric(order_weights["Case_Pallet"], errors="coerce")
     order_weights["Pallet_qty"] = np.ceil(
         order_weights["Order Quantity"] / order_weights["Case_Pallet"]
     )
+    order_weights["Cube_po"] = (
+        pd.to_numeric(order_weights["Cube_sku"], errors="coerce")
+        * order_weights["Pallet_qty"]
+    ).fillna(0).round().astype(int)
     order_weights["Weight data issue"] = (
         order_weights["Gross weight"].isna()
         | order_weights["Order Quantity"].isna()
@@ -1004,11 +1047,33 @@ def load_reference_files():
     carrier_df["Type of Carr"] = carrier_df["Type of Carr"].fillna("").astype(str).str.strip()
     carrier_df = carrier_df.dropna(subset=["SCAC Code"])
 
-    df_cube = pd.read_excel(CUBE_PATH, dtype={"Cod_articolo": str}, sheet_name="Mapping")
+    df_cube = pd.read_excel(
+        CUBE_PATH,
+        dtype={"Cod_articolo": str},
+        sheet_name="Mapping"
+    )
+    df_cube.columns = df_cube.columns.str.strip()
+    required_cube_columns = {
+        "Cod_articolo",
+        "gross lbs + pallet",
+        "Cube_ft_plt",
+        "Cube_ft_truck"
+    }
+    missing_cube_columns = required_cube_columns - set(df_cube.columns)
+    if missing_cube_columns:
+        raise ValueError(
+            "The cube mapping file is missing required columns: "
+            + ", ".join(sorted(missing_cube_columns))
+        )
     df_cube["Cod_articolo"] = df_cube["Cod_articolo"].map(_normalize_open_order_value)
     df_cube["gross lbs + pallet"] = df_cube["gross lbs + pallet"].round().astype(int)
-    df_cube["Cube Vendor PLX"] = df_cube["Cube Vendor PLX"].round().astype(int)
-    df_cube = df_cube.rename(columns={"Cube Vendor PLX": "Cube_sku"})
+    for column in ["Cube_ft_plt", "Cube_ft_truck"]:
+        df_cube[column] = pd.to_numeric(df_cube[column], errors="coerce")
+    df_cube["Cube_sku"] = np.where(
+        df_cube["Cod_articolo"].isin(STACKABLE_MATERIALS),
+        df_cube["Cube_ft_plt"],
+        df_cube["Cube_ft_truck"]
+    )
 
     return ltl_qty_df, rdc_list_df, carrier_df, df_cube
 
@@ -1391,7 +1456,7 @@ if analyze:
     else:
         try:
             with st.spinner("Matching POs and calculating truck weights and Floor Units..."):
-                ltl_qty_df, _, carrier_df, _ = load_reference_files()
+                ltl_qty_df, _, carrier_df, df_cube = load_reference_files()
                 df_all_planex = read_multiple_planex_csv(planex_files, accepted_only=False)
                 df_all_orders = read_multiple_open_orders_excel(
                     order_files,
@@ -1405,7 +1470,8 @@ if analyze:
                     df_all_planex,
                     df_all_orders,
                     ltl_qty_df,
-                    carrier_df
+                    carrier_df,
+                    df_cube
                 )
 
             st.session_state["truck_analysis_signature"] = input_signature
@@ -1499,6 +1565,28 @@ if has_current_analysis:
                 f"{unassigned_rows} order line(s) could not be assigned to a Shipment ID; "
                 "review the PO matching issues."
             )
+        manual_review_rows = truck_split_output[
+            truck_split_output["Material"]
+            .map(_normalize_open_order_value)
+            .isin(MANUAL_WEIGHT_CUBE_REVIEW_MATERIALS)
+            & truck_split_output["SID"].ne("")
+            & truck_split_output["Truck"].ne("Unassigned")
+        ]
+        if not manual_review_rows.empty:
+            manual_review_trucks = (
+                manual_review_rows
+                .groupby(["SID", "Truck"], as_index=False)
+                .agg({
+                    "Purchase Order No": lambda values: ", ".join(
+                        pd.unique(values.astype(str))
+                    )
+                })
+            )
+            st.warning(
+                "Manually review weight and cube for every listed truck containing "
+                "material 610110001491. Its weight and cube calculations are temporary."
+            )
+            st.dataframe(manual_review_trucks, use_container_width=True)
         truck_weight_limits = truck_summary.set_index("Shipment ID")["Weight limit (lbs)"]
         split_truck_weights = (
             truck_split_output[truck_split_output["Truck"] != "Unassigned"]
